@@ -34,21 +34,21 @@ class top_block(grc_wxgui.top_block_gui):
 
         #setting source
         self.src = self.source()
-        #self.waterfallsink = waterfallsink2.waterfall_sink_c(
-        #    self.GetWin(),
-        #    baseband_freq=0,
-        #    dynamic_range=100,
-        #    ref_level=0,
-        #    ref_scale=2.0,
-        #    sample_rate=samp_rate,
-        #    fft_size=512,
-        #    fft_rate=15,
-        #    average=False,
-        #    avg_alpha=None,
-        #    title="Waterfall Plot",
-        #)
-        #self.Add(self.waterfallsink.win)
-        #self.connect((self.src, 0), (self.waterfallsink, 0))
+        self.waterfallsink = waterfallsink2.waterfall_sink_c(
+            self.GetWin(),
+            baseband_freq=0,
+            dynamic_range=100,
+            ref_level=0,
+            ref_scale=2.0,
+            sample_rate=samp_rate,
+            fft_size=512,
+            fft_rate=15,
+            average=False,
+            avg_alpha=None,
+            title="Waterfall Plot",
+        )
+        self.Add(self.waterfallsink.win)
+        self.connect((self.src, 0), (self.waterfallsink, 0))
 
         #add channelizer
         channels = [(3900,4100),(4100,4300)]
