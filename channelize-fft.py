@@ -14,9 +14,9 @@ from gnuradio.eng_option import eng_option
 from gnuradio.gr import firdes
 from gnuradio.wxgui import waterfallsink2
 from grc_gnuradio import wxgui as grc_wxgui
-from grc_gnuradio import blks2 as grc_blks2
 from optparse import OptionParser
 import wx
+from gnuradio import uhd
 
 class top_block(grc_wxgui.top_block_gui):
     def __init__(self):
@@ -25,12 +25,16 @@ class top_block(grc_wxgui.top_block_gui):
         ##################################################
         # Variables
         ##################################################
-        self.skip = skip = 3900
-        self.samp_rate = samp_rate = 16e6
-        self.keep = keep = 200
+        (options, args) = self._process_options()
+        self.options    = options
+        self.args       = args
+
+        self.samp_rate = samp_rate = self.options.samp_rate
         self.fft_len = fft_len = 8000
 
-        self.wxgui_waterfallsink2_0 = waterfallsink2.waterfall_sink_c(
+        #setting source
+        self.src = self.source()
+        self.waterfallsink = waterfallsink2.waterfall_sink_c(
             self.GetWin(),
             baseband_freq=0,
             dynamic_range=100,
@@ -43,21 +47,31 @@ class top_block(grc_wxgui.top_block_gui):
             avg_alpha=None,
             title="Waterfall Plot",
         )
-        self.Add(self.wxgui_waterfallsink2_0.win)
-        self.blocks_throttle_0 = blocks.throttle(gr.sizeof_gr_complex*1, samp_rate)
-        self.blocks_file_source_0 = blocks.file_source(gr.sizeof_gr_complex*1, "/mnt/foo/arfcn_950M.cfile", True)
-        self.connect((self.blocks_file_source_0, 0), (self.blocks_throttle_0, 0))
-        self.connect((self.blocks_throttle_0, 0), (self.wxgui_waterfallsink2_0, 0))
+        self.Add(self.waterfallsink.win)
+        self.connect((self.src, 0), (self.waterfallsink, 0))
 
         #add channelizer
         channels = [(3900,4100),(4100,4300)]
+        self.channelizer_in, self.channelizer_out = self.fft_channelizer( channels)
+        self.connect((self.src, 0), (self.channelizer_in, 0))
+        self.sinks( self.channelizer_out)
 
-        self.channelizer = self.fft_channelizer( channels, 1337)
-        self.connect((self.blocks_throttle_0, 0), (self.channelizer, 0))
 
-    def fft_channelizer( self, channels, port):
-        keep = self.keep
-        skip = self.skip
+    def source( self):
+        cfile = self.options.inputfile
+        if cfile != "":
+            self.file_source = blocks.file_source(gr.sizeof_gr_complex*1, cfile, True)
+            self.throttle = blocks.throttle(gr.sizeof_gr_complex*1, self.samp_rate)
+            self.connect((self.file_source, 0), (self.throttle, 0))
+            return self.throttle
+        else:
+            self.usrp = uhd.usrp_source( "", uhd.io_type_t.COMPLEX_FLOAT32, 1)
+            self.usrp.set_samp_rate(self.samp_rate)
+            self.usrp.set_center_freq(self.options.freq)
+            print self.options.freq
+            return self.usrp
+
+    def fft_channelizer( self, channels):
         fft_len = self.fft_len
 
         #do a fwd fft
@@ -78,7 +92,6 @@ class top_block(grc_wxgui.top_block_gui):
         self.fft_channelizer_multiply_const = []
         self.fft_channelizer_fft_rev = []
         self.fft_channelizer_vector2stream = []
-        self.fft_channelizer_udp_sink = []
         for from_bin, to_bin in channels:
             #output samp rate: samp_rate / (fft_len/keep)
             keep = to_bin - from_bin
@@ -89,7 +102,6 @@ class top_block(grc_wxgui.top_block_gui):
             self.fft_channelizer_multiply_const.append( blocks.multiply_const_vcc(self.fft_channelizer_taps))
             self.fft_channelizer_fft_rev.append( fft.fft_vcc( keep, False, (window.blackmanharris(1024)), True, 1))
             self.fft_channelizer_vector2stream.append( blocks.vector_to_stream( gr.sizeof_gr_complex*1, keep))
-            self.fft_channelizer_udp_sink.append( blocks.udp_sink( gr.sizeof_gr_complex*1, "127.0.0.1", port, 1472, True))
 
             self.connect(   self.fft_channelizer_v2s,
                             self.fft_channelizer_skiphead[-1],
@@ -97,12 +109,35 @@ class top_block(grc_wxgui.top_block_gui):
                             self.fft_channelizer_stream2vector[-1],
                             self.fft_channelizer_multiply_const[-1],
                             self.fft_channelizer_fft_rev[-1],
-                            self.fft_channelizer_vector2stream[-1],
-                            self.fft_channelizer_udp_sink[-1] )
+                            self.fft_channelizer_vector2stream[-1])
 
-            port += 1
 
-        return self.fft_channelizer_s2v
+        return self.fft_channelizer_s2v, self.fft_channelizer_vector2stream
+
+    def sinks( self, src):
+        port = 1337
+        if port != 0:
+            #udp sinks
+            self.udp_sink = []
+            for s in src:
+                self.udp_sink.append( blocks.udp_sink( gr.sizeof_gr_complex*1, "127.0.0.1", port, 1472, True) )
+                self.connect( s, self.udp_sink[-1] )
+                port += 1
+
+    def _process_options(self):
+        parser = OptionParser(option_class=eng_option)
+        parser.add_option("-f", "--freq", type="eng_float", default="944.8M",
+                          help="Center freq [default=%fefault]", metavar="FREQ")
+        parser.add_option("-s", "--samp-rate", type="eng_float", default="16M",
+                          help="Center freq [default=%fefault]", metavar="FREQ")
+        parser.add_option("-I", "--inputfile", type="string", default="",
+                          help="Input filename")
+        parser.add_option("-O", "--outputfile", type="string", default="cfile2.out",
+                          help="Output filename")
+        parser.add_option("--port", type="int", default="0",
+                          help="UDP port to listen for packets")
+        (options, args) = parser.parse_args ()
+        return (options, args)
 
 
 if __name__ == '__main__':
