@@ -51,11 +51,57 @@ class top_block(grc_wxgui.top_block_gui):
         self.connect((self.src, 0), (self.waterfallsink, 0))
 
         #add channelizer
-        channels = [(3900,4100),(4100,4300)]
+        channels = self.gsm_channelizer_config( [120,115,109,106,75,55], self.gsm_arfcn2f(85))
         self.channelizer_in, self.channelizer_out = self.fft_channelizer( channels)
         self.connect((self.src, 0), (self.channelizer_in, 0))
         self.sinks( self.channelizer_out)
 
+
+    def gsm_arfcn2f( self, arfcn):
+        if arfcn < 125:
+            return 935e6 + 200e3 * arfcn
+        if arfcn > 125:
+            return 1805.2e6 + 200e3 * (arfcn-512)
+        else:
+            print "invalid arfcn %d" % arfcn
+            return 0
+
+    def gsm_channelizer_config( self, arfcns, f_center=0, samp_rate=0):
+        f_min = self.gsm_arfcn2f( min( arfcns))
+        f_max = self.gsm_arfcn2f( max( arfcns))
+
+        if f_center == 0:
+            f_center = (f_max + f_min) / 2.0
+        print "center frequency %f" % f_center
+
+        if samp_rate == 0:
+            if f_max - f_min <= 4e6:
+                samp_rate = 4e6
+            if f_max - f_min <= 8e6:
+                samp_rate = 8e6
+            elif f_max - f_min <= 16e6:
+                samp_rate = 16e6
+            elif f_max - f_min <= 32e6:
+                samp_rate = 32e6
+            else:
+                print "too much bandwidth"
+        print "sample rate %f" % samp_rate
+
+        #one bin is 2kHz
+        f_bin = 2e3 #freq. per bin
+        fft_len = int( samp_rate / f_bin)
+        print "fft len %d" % fft_len
+
+        channels = []
+        for arfcn in arfcns:
+            f = self.gsm_arfcn2f( arfcn)
+            f_offset = f_center - f
+            from_bin = int((f_offset - 200e3) / f_bin) + (fft_len / 2)
+            to_bin = int((f_offset + 200e3) / f_bin) + (fft_len / 2)
+            channels.append((from_bin, to_bin))
+            print "Arfcn %d: %d %d" % (arfcn, from_bin, to_bin)
+
+        return channels
 
     def source( self):
         cfile = self.options.inputfile
@@ -141,8 +187,8 @@ class top_block(grc_wxgui.top_block_gui):
 
 
 if __name__ == '__main__':
-	parser = OptionParser(option_class=eng_option, usage="%prog: [options]")
-	(options, args) = parser.parse_args()
+	#parser = OptionParser(option_class=eng_option, usage="%prog: [options]")
+	#(options, args) = parser.parse_args()
 	tb = top_block()
 	tb.Run(True)
 
