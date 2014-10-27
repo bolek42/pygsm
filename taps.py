@@ -1,9 +1,6 @@
 from gnuradio import gr
-import Gnuplot, Gnuplot.funcutils
 from math import *
 
-g = Gnuplot.Gnuplot(debug=1)
-g('set style data lines')
 
 filter_cutoff   = 145e3
 filter_t_width  = 10e3
@@ -43,5 +40,8 @@ def taps( n):
 
 
 if __name__ == '__main__':
+    import Gnuplot, Gnuplot.funcutils
+    g = Gnuplot.Gnuplot(debug=1)
+    g('set style data lines')
     g.plot( taps( input("n=")))
     a = raw_input("")

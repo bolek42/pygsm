@@ -38,6 +38,7 @@ class tuner(gr.feval_dd):
 
     def eval(self, freq_offet):
         self.target.set_center_freq(freq_offet)
+        print "Requested frequency offset %fkHz" % (freq_offset / 1e3)
         return freq_offet
 
 class synchronizer(gr.feval_dd):
