@@ -51,10 +51,11 @@ class top_block(grc_wxgui.top_block_gui):
         self.connect((self.src, 0), (self.waterfallsink, 0))
 
         #add channelizer
-        channels = self.gsm_channelizer_config( [120,115,109,106,75,55], self.gsm_arfcn2f(85))
+        arfcns = [120,115,109,106,75,55]
+        channels = self.gsm_channelizer_config( arfcns, self.gsm_arfcn2f(85))
         self.channelizer_in, self.channelizer_out = self.fft_channelizer( channels)
         self.connect((self.src, 0), (self.channelizer_in, 0))
-        self.sinks( self.channelizer_out)
+        self.sinks( self.channelizer_out, arfcns)
 
 
     def gsm_arfcn2f( self, arfcn):
@@ -72,7 +73,7 @@ class top_block(grc_wxgui.top_block_gui):
 
         if f_center == 0:
             f_center = (f_max + f_min) / 2.0
-        print "center frequency %f" % f_center
+        print "center frequency %.2fMHz" % (f_center / 1e6)
 
         if samp_rate == 0:
             if f_max - f_min <= 4e6:
@@ -85,7 +86,7 @@ class top_block(grc_wxgui.top_block_gui):
                 samp_rate = 32e6
             else:
                 print "too much bandwidth"
-        print "sample rate %f" % samp_rate
+        print "sample rate %.2fM" % (samp_rate / 1e6)
 
         #one bin is 2kHz
         f_bin = 2e3 #freq. per bin
@@ -95,11 +96,11 @@ class top_block(grc_wxgui.top_block_gui):
         channels = []
         for arfcn in arfcns:
             f = self.gsm_arfcn2f( arfcn)
-            f_offset = f_center - f
+            f_offset = f - f_center
             from_bin = int((f_offset - 200e3) / f_bin) + (fft_len / 2)
             to_bin = int((f_offset + 200e3) / f_bin) + (fft_len / 2)
             channels.append((from_bin, to_bin))
-            print "Arfcn %d: %d %d" % (arfcn, from_bin, to_bin)
+            print "Arfcn %d @ %.2fMHz: %d %d" % (arfcn, f/1e6, from_bin, to_bin)
 
         return channels
 
@@ -160,14 +161,15 @@ class top_block(grc_wxgui.top_block_gui):
 
         return self.fft_channelizer_s2v, self.fft_channelizer_vector2stream
 
-    def sinks( self, src):
+    def sinks( self, src, arfcns):
         port = 1337
         if port != 0:
             #udp sinks
             self.udp_sink = []
-            for s in src:
+            for s,arfcn in zip(src, arfcns):
                 self.udp_sink.append( blocks.udp_sink( gr.sizeof_gr_complex*1, "127.0.0.1", port, 1472, True) )
                 self.connect( s, self.udp_sink[-1] )
+                print "Arfcn %d @ UDP %d" % (arfcn, port)
                 port += 1
 
     def _process_options(self):
