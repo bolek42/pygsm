@@ -150,9 +150,9 @@ class top_block(grc_wxgui.top_block_gui):
         parser = OptionParser(option_class=eng_option)
         parser.add_option( "-a", "--arfcns", type="str", default="",
                           help="List of arfcns to channelize e.g. 12,45,32,22")
-        parser.add_option( "-f", "--freq", type="eng_float", default="944.8M",
+        parser.add_option( "-f", "--freq", type="eng_float", default="0",
                           help="Center freq [default=%fefault]", metavar="FREQ")
-        parser.add_option( "-s", "--samp-rate", type="eng_float", default="16M",
+        parser.add_option( "-s", "--samp-rate", type="eng_float", default="0",
                           help="Center freq [default=%fefault]", metavar="FREQ")
         parser.add_option( "-I", "--inputfile", type="string", default="",
                           help="Input filename")
@@ -196,26 +196,31 @@ class top_block(grc_wxgui.top_block_gui):
         self.f_center = f_center
 
         #sample rate
+        bandwidth = f_max - f_min
+        print "needed bandwidth %.2fM" % (bandwidth / 1e6)
         if samp_rate == 0:
-            if f_max - f_min <= 4e6:
+            if bandwidth <= 1e6:
+                samp_rate = 1e6
+            elif bandwidth <= 2e6:
+                samp_rate = 2e6
+            elif bandwidth <= 4e6:
                 samp_rate = 4e6
-            if f_max - f_min <= 8e6:
+            elif bandwidth <= 8e6:
                 samp_rate = 8e6
-            elif f_max - f_min <= 16e6:
+            elif bandwidth <= 16e6:
                 samp_rate = 16e6
-            elif f_max - f_min <= 32e6:
+            elif bandwidth <= 32e6:
                 samp_rate = 32e6
             else:
                 print "too much bandwidth"
-        print "needed bandwidth %.2fM" % (f_max - f_min / 1e6)
         print "sample rate %.2fM" % (samp_rate / 1e6)
         self.samp_rate = samp_rate
 
         #fft len
         #one bin is 2kHz
-        f_bin = 20e3 #freq. per bin
+        f_bin = 2e3 #freq. per bin
         fft_len = int( samp_rate / f_bin)
-        print "fft len %d" % fft_len
+        print "fft len %d" % (fft_len)
         self.fft_len = fft_len
 
         #compute channel_bins
