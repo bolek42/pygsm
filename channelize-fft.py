@@ -18,29 +18,45 @@ from optparse import OptionParser
 import wx
 from gnuradio import uhd
 
+import taps #fft channelizer taps
+
 class top_block(grc_wxgui.top_block_gui):
     def __init__(self):
         grc_wxgui.top_block_gui.__init__(self, title="Top Block")
 
-        ##################################################
-        # Variables
-        ##################################################
-        (options, args) = self._process_options()
-        self.options    = options
-        self.args       = args
-
-        self.samp_rate = samp_rate = self.options.samp_rate
-        self.fft_len = fft_len = 8000
+        #configure channelizer
+        self.process_options()
+        self.gsm_channelizer_config()
 
         #setting source
         self.src = self.source()
+        self.channelizer_in, self.channelizer_out = self.fft_channelizer( self.fft_len, self.channel_bins)
+        self.connect((self.src, 0), (self.channelizer_in, 0))
+        self.sinks( self.channelizer_out, self.options.arfcns)
+
+    ############################################
+    #       Source                             #
+    ############################################
+    def source( self):
+        cfile = self.options.inputfile
+        if cfile != "":
+            self.file_source = blocks.file_source(gr.sizeof_gr_complex*1, cfile, True)
+            self.throttle = blocks.throttle(gr.sizeof_gr_complex*1, self.samp_rate)
+            self.connect((self.file_source, 0), (self.throttle, 0))
+            src = self.throttle
+        else:
+            self.usrp = uhd.usrp_source( "", uhd.io_type_t.COMPLEX_FLOAT32, 1)
+            self.usrp.set_samp_rate( self.samp_rate)
+            self.usrp.set_center_freq( self.f_center)
+            src = self.usrp
+
         self.waterfallsink = waterfallsink2.waterfall_sink_c(
             self.GetWin(),
-            baseband_freq=0,
+            baseband_freq=self.f_center,
             dynamic_range=100,
             ref_level=0,
             ref_scale=2.0,
-            sample_rate=samp_rate,
+            sample_rate=self.samp_rate,
             fft_size=512,
             fft_rate=15,
             average=False,
@@ -48,79 +64,14 @@ class top_block(grc_wxgui.top_block_gui):
             title="Waterfall Plot",
         )
         self.Add(self.waterfallsink.win)
-        self.connect((self.src, 0), (self.waterfallsink, 0))
+        self.connect((src, 0), (self.waterfallsink, 0))
 
-        #add channelizer
-        arfcns = [120,115,109,106,75,55]
-        channels = self.gsm_channelizer_config( arfcns, self.gsm_arfcn2f(85))
-        self.channelizer_in, self.channelizer_out = self.fft_channelizer( channels)
-        self.connect((self.src, 0), (self.channelizer_in, 0))
-        self.sinks( self.channelizer_out, arfcns)
+        return src
 
-
-    def gsm_arfcn2f( self, arfcn):
-        if arfcn < 125:
-            return 935e6 + 200e3 * arfcn
-        if arfcn > 125:
-            return 1805.2e6 + 200e3 * (arfcn-512)
-        else:
-            print "invalid arfcn %d" % arfcn
-            return 0
-
-    def gsm_channelizer_config( self, arfcns, f_center=0, samp_rate=0):
-        f_min = self.gsm_arfcn2f( min( arfcns))
-        f_max = self.gsm_arfcn2f( max( arfcns))
-
-        if f_center == 0:
-            f_center = (f_max + f_min) / 2.0
-        print "center frequency %.2fMHz" % (f_center / 1e6)
-
-        if samp_rate == 0:
-            if f_max - f_min <= 4e6:
-                samp_rate = 4e6
-            if f_max - f_min <= 8e6:
-                samp_rate = 8e6
-            elif f_max - f_min <= 16e6:
-                samp_rate = 16e6
-            elif f_max - f_min <= 32e6:
-                samp_rate = 32e6
-            else:
-                print "too much bandwidth"
-        print "sample rate %.2fM" % (samp_rate / 1e6)
-
-        #one bin is 2kHz
-        f_bin = 2e3 #freq. per bin
-        fft_len = int( samp_rate / f_bin)
-        print "fft len %d" % fft_len
-
-        channels = []
-        for arfcn in arfcns:
-            f = self.gsm_arfcn2f( arfcn)
-            f_offset = f - f_center
-            from_bin = int((f_offset - 200e3) / f_bin) + (fft_len / 2)
-            to_bin = int((f_offset + 200e3) / f_bin) + (fft_len / 2)
-            channels.append((from_bin, to_bin))
-            print "Arfcn %d @ %.2fMHz: %d %d" % (arfcn, f/1e6, from_bin, to_bin)
-
-        return channels
-
-    def source( self):
-        cfile = self.options.inputfile
-        if cfile != "":
-            self.file_source = blocks.file_source(gr.sizeof_gr_complex*1, cfile, True)
-            self.throttle = blocks.throttle(gr.sizeof_gr_complex*1, self.samp_rate)
-            self.connect((self.file_source, 0), (self.throttle, 0))
-            return self.throttle
-        else:
-            self.usrp = uhd.usrp_source( "", uhd.io_type_t.COMPLEX_FLOAT32, 1)
-            self.usrp.set_samp_rate(self.samp_rate)
-            self.usrp.set_center_freq(self.options.freq)
-            print self.options.freq
-            return self.usrp
-
-    def fft_channelizer( self, channels):
-        fft_len = self.fft_len
-
+    ############################################
+    #       Channelizer                        #
+    ############################################
+    def fft_channelizer( self, fft_len, channel_bins):
         #do a fwd fft
         self.fft_channelizer_s2v = blocks.stream_to_vector( gr.sizeof_gr_complex*1, fft_len)
         self.fft_channelizer_fft_fwd = fft.fft_vcc( fft_len, True, (window.blackmanharris(1024)), True, 1)
@@ -129,9 +80,6 @@ class top_block(grc_wxgui.top_block_gui):
                         self.fft_channelizer_fft_fwd,
                         self.fft_channelizer_v2s)
 
-        #copmpute!
-        self.fft_channelizer_taps = [3.3027386574467086e-05, 7.530449030671414e-05, 0.00016530103281468393, 0.0003493911008977848, 0.000711233110397085, 0.0013946596828618902, 0.0026350235978981297, 0.004798194877209025, 0.00842327275699453, 0.014260794880177651, 0.02329364098706189, 0.03672455769782423, 0.055914415841515304, 0.08226092122025148, 0.1170192982944558, 0.16108302697492857, 0.2147600393405324, 0.2775920283882359, 0.3482658701540932, 0.4246533245032583, 0.5039894228038793, 0.5831675293759861, 0.659099532651724, 0.7290724636693747, 0.7910337917145012, 0.8437563875152905, 0.886864422805077, 0.920733628092362, 0.9463040008519988, 0.9648544454681403, 0.9777861783431654, 0.9864486969767231, 0.9920246178488873, 0.9954734645074557, 0.9975232854337563, 0.9986939772853741, 0.9993364486536307, 0.9996752532824711, 0.9998469370057872, 0.9999305344482086, 0.9999696492179403, 0.9999872354304371, 0.9999948332229748, 0.9999979873990753, 0.9999992456511154, 0.9999997279678726, 0.999999905623862, 0.9999999685034864, 0.9999999898891326, 0.9999999968781635, 0.9999999990729559, 0.9999999997352511, 0.9999999999272906, 0.9999999999807979, 0.9999999999951235, 0.9999999999988088, 0.9999999999997199, 0.9999999999999364, 0.9999999999999857, 0.9999999999999964, 0.9999999999999989, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999991, 0.9999999999999989, 0.9999999999999964, 0.9999999999999857, 0.9999999999999364, 0.9999999999997199, 0.9999999999988088, 0.9999999999951235, 0.9999999999807979, 0.9999999999272906, 0.9999999997352511, 0.9999999990729559, 0.9999999968781635, 0.9999999898891326, 0.9999999685034864, 0.999999905623862, 0.9999997279678726, 0.9999992456511154, 0.9999979873990753, 0.9999948332229748, 0.9999872354304371, 0.9999696492179403, 0.9999305344482086, 0.9998469370057872, 0.9996752532824711, 0.9993364486536307, 0.9986939772853741, 0.9975232854337563, 0.9954734645074557, 0.9920246178488873, 0.9864486969767231, 0.9777861783431654, 0.9648544454681403, 0.9463040008519988, 0.920733628092362, 0.886864422805077, 0.8437563875152905, 0.7910337917145012, 0.7290724636693747, 0.659099532651724, 0.5831675293759861, 0.5039894228038793, 0.4246533245032583, 0.3482658701540932, 0.2775920283882359, 0.2147600393405324, 0.16108302697492857, 0.1170192982944558, 0.08226092122025148, 0.055914415841515304, 0.03672455769782423, 0.02329364098706189, 0.014260794880177651, 0.00842327275699453, 0.004798194877209025, 0.0026350235978981297, 0.0013946596828618902, 0.000711233110397085, 0.0003493911008977848, 0.00016530103281468393, 7.530449030671414e-05]
-
         #per channel
         self.fft_channelizer_skiphead = []
         self.fft_channelizer_keep_m_in_n = []
@@ -139,14 +87,15 @@ class top_block(grc_wxgui.top_block_gui):
         self.fft_channelizer_multiply_const = []
         self.fft_channelizer_fft_rev = []
         self.fft_channelizer_vector2stream = []
-        for from_bin, to_bin in channels:
+        for from_bin, to_bin in channel_bins:
             #output samp rate: samp_rate / (fft_len/keep)
             keep = to_bin - from_bin
+            fft_channelizer_taps = taps.taps(keep)
 
             self.fft_channelizer_skiphead.append( blocks.skiphead(gr.sizeof_gr_complex*1, from_bin))
             self.fft_channelizer_keep_m_in_n.append( blocks.keep_m_in_n(gr.sizeof_gr_complex, keep, fft_len, 0))
             self.fft_channelizer_stream2vector.append( blocks.stream_to_vector(gr.sizeof_gr_complex*1, keep))
-            self.fft_channelizer_multiply_const.append( blocks.multiply_const_vcc(self.fft_channelizer_taps))
+            self.fft_channelizer_multiply_const.append( blocks.multiply_const_vcc(fft_channelizer_taps))
             self.fft_channelizer_fft_rev.append( fft.fft_vcc( keep, False, (window.blackmanharris(1024)), True, 1))
             self.fft_channelizer_vector2stream.append( blocks.vector_to_stream( gr.sizeof_gr_complex*1, keep))
 
@@ -161,10 +110,15 @@ class top_block(grc_wxgui.top_block_gui):
 
         return self.fft_channelizer_s2v, self.fft_channelizer_vector2stream
 
+    ############################################
+    #       Sinks                              #
+    ############################################
     def sinks( self, src, arfcns):
-        port = 1337
+        nullsink = True
+        #udp sinks
+        port = self.options.port
         if port != 0:
-            #udp sinks
+            nullsink = False
             self.udp_sink = []
             for s,arfcn in zip(src, arfcns):
                 self.udp_sink.append( blocks.udp_sink( gr.sizeof_gr_complex*1, "127.0.0.1", port, 1472, True) )
@@ -172,25 +126,110 @@ class top_block(grc_wxgui.top_block_gui):
                 print "Arfcn %d @ UDP %d" % (arfcn, port)
                 port += 1
 
-    def _process_options(self):
-        parser = OptionParser(option_class=eng_option)
-        parser.add_option("-f", "--freq", type="eng_float", default="944.8M",
-                          help="Center freq [default=%fefault]", metavar="FREQ")
-        parser.add_option("-s", "--samp-rate", type="eng_float", default="16M",
-                          help="Center freq [default=%fefault]", metavar="FREQ")
-        parser.add_option("-I", "--inputfile", type="string", default="",
-                          help="Input filename")
-        parser.add_option("-O", "--outputfile", type="string", default="cfile2.out",
-                          help="Output filename")
-        parser.add_option("--port", type="int", default="0",
-                          help="UDP port to listen for packets")
-        (options, args) = parser.parse_args ()
-        return (options, args)
+        #file sink
+        outdir = self.options.outputdir
+        if outdir != "":
+            nullsink = False
+            self.file_sink = []
+            for s,arfcn in zip(src, arfcns):
+                self.file_sink.append( blocks.file_sink(gr.sizeof_gr_complex*1, "%s/arfcn_%d.cfile" % (outdir, arfcn)))
+                self.connect( s, self.file_sink[-1] )
 
+        if nullsink:
+            self.null_sink = []
+            for s,arfcn in zip(src, arfcns):
+                self.null_sink.append( blocks.null_sink(gr.sizeof_gr_complex*1))
+                self.connect( s, self.null_sink[-1] )
+
+
+
+    ############################################
+    #       Options and Config                 #
+    ############################################
+    def process_options(self):
+        parser = OptionParser(option_class=eng_option)
+        parser.add_option( "-a", "--arfcns", type="str", default="",
+                          help="List of arfcns to channelize e.g. 12,45,32,22")
+        parser.add_option( "-f", "--freq", type="eng_float", default="944.8M",
+                          help="Center freq [default=%fefault]", metavar="FREQ")
+        parser.add_option( "-s", "--samp-rate", type="eng_float", default="16M",
+                          help="Center freq [default=%fefault]", metavar="FREQ")
+        parser.add_option( "-I", "--inputfile", type="string", default="",
+                          help="Input filename")
+        parser.add_option( "-O", "--outputdir", type="string", default="",
+                          help="Output filename")
+        parser.add_option( "-p", "--port", type="int", default="0",
+                          help="UDP Port for first channel")
+        (options, args) = parser.parse_args ()
+
+        #parsing arfcn list
+        arfcns = []
+        for arfcn in  options.arfcns.split(","):
+            arfcns.append( int( arfcn ))
+
+        options.arfcns = arfcns
+
+        self.options = options
+
+
+    def gsm_arfcn2f( self, arfcn):
+        if arfcn < 125:
+            return 935e6 + 200e3 * arfcn
+        if arfcn > 125:
+            return 1805.2e6 + 200e3 * (arfcn-512)
+        else:
+            print "invalid arfcn %d" % arfcn
+            return 0
+
+    def gsm_channelizer_config( self):
+        #reading options
+        arfcns = self.options.arfcns
+        f_center = self.options.freq
+        samp_rate = self.options.samp_rate
+
+        #center frequency
+        f_min = self.gsm_arfcn2f( min( arfcns))
+        f_max = self.gsm_arfcn2f( max( arfcns))
+        if f_center == 0:
+            f_center = (f_max + f_min) / 2.0
+        print "center frequency %.2fMHz" % (f_center / 1e6)
+        self.f_center = f_center
+
+        #sample rate
+        if samp_rate == 0:
+            if f_max - f_min <= 4e6:
+                samp_rate = 4e6
+            if f_max - f_min <= 8e6:
+                samp_rate = 8e6
+            elif f_max - f_min <= 16e6:
+                samp_rate = 16e6
+            elif f_max - f_min <= 32e6:
+                samp_rate = 32e6
+            else:
+                print "too much bandwidth"
+        print "needed bandwidth %.2fM" % (f_max - f_min / 1e6)
+        print "sample rate %.2fM" % (samp_rate / 1e6)
+        self.samp_rate = samp_rate
+
+        #fft len
+        #one bin is 2kHz
+        f_bin = 20e3 #freq. per bin
+        fft_len = int( samp_rate / f_bin)
+        print "fft len %d" % fft_len
+        self.fft_len = fft_len
+
+        #compute channel_bins
+        channel_bins = []
+        for arfcn in arfcns:
+            f = self.gsm_arfcn2f( arfcn)
+            f_offset = f - f_center
+            from_bin = int((f_offset - 200e3) / f_bin) + (fft_len / 2)
+            to_bin = int((f_offset + 200e3) / f_bin) + (fft_len / 2)
+            channel_bins.append((from_bin, to_bin))
+            print "Arfcn %d @ %.2fMHz: %d %d" % (arfcn, f/1e6, from_bin, to_bin)
+        self.channel_bins = channel_bins
 
 if __name__ == '__main__':
-	#parser = OptionParser(option_class=eng_option, usage="%prog: [options]")
-	#(options, args) = parser.parse_args()
 	tb = top_block()
 	tb.Run(True)
 

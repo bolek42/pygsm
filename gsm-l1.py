@@ -46,7 +46,8 @@ class synchronizer(gr.feval_dd):
         self.top_block = top_block
 
     def eval(self, timing_offset):
-        pass
+        print "Requested timing offset %f" % timing_offset
+        sys.exit(1)
         return freq_offet
 
 

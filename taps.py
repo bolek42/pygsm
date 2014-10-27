@@ -33,14 +33,15 @@ def f(x, l):
     x = x / 10.0 + 8
     return gauss_int( x)
 
-x = []
-for i in range( 200):
-    print i
-    y = f(i, 200)
-    x.append( y)
+def taps( n):
+    x = []
+    for i in range( n):
+        y = f(i, n)
+        x.append( y)
 
-print x
-g.plot(x)
+    return x
 
-a = raw_input("")
-raw_input()
+
+if __name__ == '__main__':
+    g.plot( taps( input("n=")))
+    a = raw_input("")
