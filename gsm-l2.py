@@ -14,17 +14,19 @@ class bcch:
         self.mt = mt = ord(data[2]) #message types
         self.cell_allocation = []
 
-    def process( self):
+        self.process()
 
-        #hexdump( data)
-        #hexdump( data[ self.hlen:])
+    def process( self):
         if self.pd == 0x06: #usual package
             if self.mt == 0x19: #system information type 1
                 self.system_info_1( data[3:])
 
             if self.mt == 0x3f: #immediate assignment
                 self.immediate_assignment( data[3:])
-            #verify!!!
+
+            if self.mt == 0x21: #paging request type 1
+                pass
+
             if self.mt == 0x22: #paging request type 2
                 self.pm = data[3] #paging mode
                 self.cn = data[4] #channel needed
@@ -41,7 +43,6 @@ class bcch:
 
     def system_info_1( self, data):
         format_id = ord( data[0])
-        hexdump( self.data)
 
         if format_id == 0: #bitmask 0
             ca = 120
@@ -54,12 +55,14 @@ class bcch:
 
                 i += 1
                 ca -= 8
+            #print "CA:", self.cell_allocation
 
     def immediate_assignment( self, data):
         return
         hexdump(data)
         self.page_mode = ord( data[0]) & 0x0f
 
+        print "got assignment"
         if ord(data[0]) & 0x10:
             #l2_RRimmediateAssTBFC()
             print "fooo"
@@ -89,12 +92,4 @@ while 1:
     gsmtap_len = ord(raw[1]) * 4
     gsmtap = raw[0:gsmtap_len-1]
     data = raw[gsmtap_len:]
-    #hexdump( data)
     pack = bcch( data)
-    pack.process()
-
-    #debug
-    #if pack.mt & 0xfa == 0x20:
-    if pack.mt == 0x3f:
-        #hexdump( data)
-        sock.sendto( raw, ("127.0.0.1", 4730))
