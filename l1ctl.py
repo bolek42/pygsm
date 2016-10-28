@@ -4,7 +4,7 @@ from scapy.all import *
 import socket
 import SocketServer
 from binascii import *
-
+import gsmtap
 
 msgtype = {
     "NONE": 0,
@@ -40,40 +40,100 @@ msgtype = {
     "TRAFFIC_IND": 30 }
 
 reset_type = {
-    "RES_T_BOOT": 0,
-    "RES_T_FULL": 1,
-    "RES_T_SCHED": 2}
+    "BOOT": 0,
+    "FULL": 1,
+    "SCHED": 2}
 
 ccch_mode = {
     "NONE": 0,
     "NON_COMBINED": 1,
     "COMBINED": 2}
 
-# chan_nr
-RSL_CHAN_NR_MASK = 0xf8
-RSL_CHAN_Bm_ACCHs = 0x08
-RSL_CHAN_Lm_ACCH = 0x10
-RSL_CHAN_SDCCH4_ACCH = 0x20
-RSL_CHAN_SDCCH8_ACCH = 0x40
-RSL_CHAN_BCCH = 0x80
-RSL_CHAN_RACH = 0x88
-RSL_CHAN_PCH_AGCH = 0x90
+channel_type = {
+    "Bm_ACCHs": 0b00001,
+    "Lm_ACCHs#0": 0b00010,
+    "Lm_ACCHs#1": 0b00011,
+    "SDCCH4_ACCH#0": 0b00100,
+    "SDCCH4_ACCH#1": 0b00101,
+    "SDCCH4_ACCH#2": 0b00110,
+    "SDCCH4_ACCH#3": 0b00111,
+    "SDCCH8_ACCH#0": 0b01000,
+    "SDCCH8_ACCH#1": 0b01001,
+    "SDCCH8_ACCH#2": 0b01010,
+    "SDCCH8_ACCH#3": 0b01011,
+    "SDCCH8_ACCH#4": 0b01100,
+    "SDCCH8_ACCH#5": 0b01101,
+    "SDCCH8_ACCH#6": 0b01110,
+    "SDCCH8_ACCH#7": 0b01111,
+    "BCCH":0b10000,
+    "RACH":0b10001,
+    "PCH_AGCH":0b10010}
+
+#GSM 08.58 9.3.1
+#channeltype, subslot
+def channel_type2gsmtap(channel_type):
+    if channel_type == 0b00001:
+        return gsmtap.channel_type["TCH_F"],0
+    if ((channel_type ^ 0b00010) & 0b11110)  == 0:
+        return gsmtap.channel_type["TCH_H"], channel_type & 0b00001
+    if ((channel_type ^ 0b00100) & 0b11100)  == 0:
+        return gsmtap.channel_type["SDCCH4"], channel_type & 0b00011
+    if ((channel_type ^ 0b01000) & 0b11000)  == 0:
+        return gsmtap.channel_type["SDCCH8"], channel_type & 0b00111
+    if channel_type == 0b10000:
+        return gsmtap.channel_type["BCCH"], 0
+    if channel_type == 0b10001:
+        return gsmtap.channel_type["RACH"], 0
+    if channel_type == 0b10010:
+        return gsmtap.channel_type["PCH"], 0
+    return 0xff, 0xff
+
 
 class osmol1(Packet):
     fields_desc=[   ByteEnumField("msgtype", None, msgtype),
                     ByteField("flags",0),
-                    ShortField("padding",0)]
+                    ShortField("",0)]
 
 
+def osmol1_info_ul():
+    return [
+        BitEnumField("channel_type", 0x00, 5, channel_type),
+        BitField("timeslot", 0x00, 3),
+        ByteField("link_id",None),
+        BitField("",0,16)]
 
-class osmol1_reset_req(Packet):
-    name = "l1ctl_reset"
+def osmol1_info_dl():
+    return [
+        BitEnumField("channel_type", 0x00, 5, channel_type),
+        BitField("timeslot", 0x00, 3),
+        ByteField("link_id",0),
+        ShortField("arfcn",0),
+        IntField("frame_nr",0),
+        ByteField("rx_level",0),
+        ByteField("snr",0),
+        ByteField("num_biterr",0),
+        ByteField("fire_crc",0)]
+
+
+class osmol1_reset(Packet):
     fields_desc = [
         ByteEnumField("type",1,reset_type),
-        ByteField("padding",0),
-        ByteField("padding",0),
-        ByteField("padding",0)
+        BitField("",0,24),
     ]
+
+class osmol1_pm_req(Packet):
+    fields_desc = [
+        ByteEnumField("type",1,reset_type),
+        BitField("",0,24),
+        ShortField("arfcn_from",0),
+        ShortField("arfcn_to",0)]
+
+class osmol1_pm_conf(Packet):
+    fields_desc = [
+        ShortField("arfcn",0),
+        ByteField("pm1",0),
+        ByteField("pm2",0),]
+
 
 class osmol1_fbsb_req(Packet):
     fields_desc = [
@@ -88,62 +148,118 @@ class osmol1_fbsb_req(Packet):
         ByteField("rxlev_exp",0)
     ]
 
+class osmol1_fbsb_conf(Packet):
+    fields_desc = osmol1_info_dl() + [
+        ShortField("initial_freq_err",None),
+        ByteField("result",None),
+        ByteField("bsic",None)]
+
+class osmol1_crypto_req(Packet):
+    fields_desc = osmol1_info_ul() + [
+        ByteField("algo",None),
+        FieldListField("kc", None, XByteField("kc",0))]
+
 class osmol1_dm_est_req(Packet):
-    fields_desc = [
+    fields_desc = osmol1_info_ul() + [
+        #dm_est_req
         ByteField("tsc",None),
+        ByteField("h",None),
 
         #h0
         ByteField("hsn",None),
         ByteField("maio",None),
         ByteField("n",None),
-        ByteField("padding",None),
-        #FieldListField("ma", None, ShortField("arfcn",0), count_from= lambda p: 64),
+        ByteField("",None),
+        FieldListField("ma", None, ShortField("arfcn",0), count_from= lambda p: 64),
 
+        #dm_est_req
         ByteField("tch_mode",None),
         ByteField("audio_mode",None),
     ]
-    
 
-class osmol1_data(Packet):
-    fields_desc = [
-        ByteEnumField("chan_nr",8,{ 0xf8:"RSL_CHAN_NR_MASK",
-                                    0x08:"RSL_CHAN_Bm_ACCHs",
-                                    0x10:"RSL_CHAN_Lm_ACCHs",
-                                    0x20:"RSL_CHAN_SDCCH4_ACCH",
-                                    0x40:"RSL_CHAN_SDCCH8_ACCH",
-                                    0x80:"RSL_CHAN_BCCH",
-                                    0x88:"RSL_CHAN_RACH",
-                                    0x90:"RSL_CHAN_PCH_AGCH"}),
-        ByteField("link_id",0),
-        ShortField("arfcn",0),
-        IntField("frame_nr",0),
-        ByteField("rx_level",0),
-        ByteField("snr",0),
-        ByteField("num_biterr",0),
-        ByteField("fire_crc",0),
+class osmol1_par_req(Packet):
+    fields_desc = osmol1_info_ul() + [
+        ByteField("ta",None),
+        ByteField("tx_power",None),
+        ShortField("",24),
     ]
 
-class osmol1_ccch_mode_req(Packet):
+class osmol1_rach_req(Packet):
+    fields_desc = osmol1_info_ul() + [
+        ByteField("ra",None),
+        ByteField("combined",None),
+        ShortField("offset",0),
+    ]
+class osmol1_rach_conf(Packet):
+    fields_desc = osmol1_info_dl()
+
+class osmol1_data_ind(Packet):
+    fields_desc = osmol1_info_dl()
+
+class osmol1_data_conf(Packet):
+    fields_desc = osmol1_info_dl()
+
+class osmol1_data_req(Packet):
+    fields_desc = osmol1_info_ul()
+
+class osmol1_ccch_mode(Packet):
     fields_desc = [
         ByteEnumField("chan_mode",1,ccch_mode),
-        ByteField("padding",0),
-        ByteField("padding",0),
-        ByteField("padding",0)
+        BitField("",0,24),
     ]
 
-bind_layers(osmol1, osmol1_fbsb_req, msgtype=1)
-bind_layers(osmol1, osmol1_data, msgtype=3)
-bind_layers(osmol1, osmol1_dm_est_req, msgtype=5)
-bind_layers(osmol1, osmol1_reset_req, msgtype=13)
-bind_layers(osmol1, osmol1_ccch_mode_req, msgtype=16)
+bind_layers(osmol1, osmol1_fbsb_req, msgtype=msgtype["FBSB_REQ"])
+bind_layers(osmol1, osmol1_fbsb_conf, msgtype=msgtype["FBSB_CONF"])
+bind_layers(osmol1, osmol1_pm_req, msgtype=msgtype["PM_REQ"])
+bind_layers(osmol1, osmol1_crypto_req, msgtype=msgtype["CRYPTO_REQ"])
+bind_layers(osmol1, osmol1_pm_conf, msgtype=msgtype["PM_CONF"])
+bind_layers(osmol1, osmol1_data_ind, msgtype=msgtype["DATA_IND"])
+bind_layers(osmol1, osmol1_data_req, msgtype=msgtype["DATA_REQ"])
+bind_layers(osmol1, osmol1_data_conf, msgtype=msgtype["DATA_CONF"])
+bind_layers(osmol1, osmol1_rach_req, msgtype=msgtype["RACH_REQ"])
+bind_layers(osmol1, osmol1_rach_conf, msgtype=msgtype["RACH_CONF"])
+bind_layers(osmol1, osmol1_par_req, msgtype=msgtype["PARAM_REQ"])
+bind_layers(osmol1, osmol1_dm_est_req, msgtype=msgtype["DM_EST_REQ"])
+bind_layers(osmol1, osmol1_reset, msgtype=msgtype["RESET_REQ"])
+bind_layers(osmol1, osmol1_reset, msgtype=msgtype["RESET_CONF"])
+bind_layers(osmol1, osmol1_ccch_mode, msgtype=msgtype["CCCH_MODE_REQ"])
+bind_layers(osmol1, osmol1_ccch_mode, msgtype=msgtype["CCCH_MODE_CONF"])
+
+
+def bind_gsm(layer):
+    bind_layers(layer, gsmtap.CCCH, channel_type=channel_type["RACH"])
+    bind_layers(layer, gsmtap.CCCH, channel_type=channel_type["BCCH"])
+    bind_layers(layer, gsmtap.CCCH, channel_type=channel_type["PCH_AGCH"])
+
+    bind_layers(layer, gsmtap.LAPDM, channel_type=channel_type["SDCCH4_ACCH#0"])
+    bind_layers(layer, gsmtap.LAPDM, channel_type=channel_type["SDCCH4_ACCH#1"])
+    bind_layers(layer, gsmtap.LAPDM, channel_type=channel_type["SDCCH4_ACCH#2"])
+    bind_layers(layer, gsmtap.LAPDM, channel_type=channel_type["SDCCH4_ACCH#3"])
+
+    bind_layers(layer, gsmtap.LAPDM, channel_type=channel_type["SDCCH8_ACCH#0"])
+    bind_layers(layer, gsmtap.LAPDM, channel_type=channel_type["SDCCH8_ACCH#1"])
+    bind_layers(layer, gsmtap.LAPDM, channel_type=channel_type["SDCCH8_ACCH#2"])
+    bind_layers(layer, gsmtap.LAPDM, channel_type=channel_type["SDCCH8_ACCH#3"])
+    bind_layers(layer, gsmtap.LAPDM, channel_type=channel_type["SDCCH8_ACCH#4"])
+    bind_layers(layer, gsmtap.LAPDM, channel_type=channel_type["SDCCH8_ACCH#5"])
+    bind_layers(layer, gsmtap.LAPDM, channel_type=channel_type["SDCCH8_ACCH#6"])
+    bind_layers(layer, gsmtap.LAPDM, channel_type=channel_type["SDCCH8_ACCH#7"])
+    #"Bm_ACCHs"
+    #"Lm_ACCHs#0"
+    #"Lm_ACCHs#1"
+
+bind_gsm(osmol1_data_ind)
+bind_gsm(osmol1_data_req)
+bind_gsm(osmol1_data_conf)
+
 
 class l1ctl:
     def __init__(self, l1sock):
         #open socket
         self.sock = socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
         self.sock.connect(l1sock)
-
-        #self.reset()
+        
+        self.gsmtap_sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 
     def l1_send(self, pack):
         l = struct.pack("!H", len(pack))
@@ -157,22 +273,85 @@ class l1ctl:
             return buff
         return osmol1(buff)
 
-    #preforms a full reset
-    def reset(self):
-        print "reset"
-        pack = osmol1(msgtype=13) / osmol1_reset_req(type=1)
+    def reset(self, t=1):
+        pack = osmol1(msgtype=13) / osmol1_reset(type=t)
         self.l1_send(pack)
 
-    def set_arfcn(self, arfcn):
-        print "set arfcn %d" % arfcn
+    #sync to arfcn
+    def fbsb_req(self, arfcn):
         pack = osmol1(msgtype=1) / osmol1_fbsb_req(band_arfcn=arfcn)
         self.l1_send(pack)
+
+        while True:
+            p = self.l1_recv()
+            if osmol1_fbsb_conf in p:
+                if p.result == 0:
+                    p2 = self.recv()
+                    dbm = p2.signal_level - 110
+                else:
+                    dbm = -110
+                print "Arfcn: %d result %3d rxlevel: %ddbm" % (arfcn, p.result, dbm)
+                return p, dbm
+
+    def dm_est_req(self, channel_type, timeslot, maio, hsn, training_sequence, ma):
+        ma_pad = ma + [0] * (64-len(ma))
+        est = osmol1_dm_est_req(
+            link_id = 0,
+            tsc=training_sequence,
+            h = 1,
+            channel_type = channel_type,
+            timeslot = timeslot,
+            maio = maio,
+            ma = ma_pad,
+            n = len(ma),
+            tch_mode = 0,
+            audio_mode = 5)
+
+        pack = osmol1(msgtype=msgtype["DM_EST_REQ"]) / est
+        print repr(pack)
+        self.l1_send(pack)
+            
+    def rach_req(self, ra, combined=0, offset=0):
+        rq = osmol1_rach_req(
+            channel_type=0,
+            timeslot=0,
+            link_id=0,
+            ra=ra,
+            combined=combined,
+            offset=offset)
+        pack = osmol1(msgtype=msgtype["RACH_REQ"]) / rq
+        #print repr(pack)
+        self.l1_send(pack)
+
+    def param_req(self, timing_advance, tx_power):
+        pr = osmol1_par_req(
+            channel_type=0,
+            timeslot=0,
+            link_id=0,
+            ta=timing_advance,
+            tx_power=tx_power)
+        pack = osmol1(msgtype=msgtype["PARAM_REQ"]) / pr
+        print repr(pack)
+        self.l1_send(pack)
+        
 
     #receive data
     def recv(self):
         while True:
             p = self.l1_recv()
             if p.msgtype == 3:
+                gsmtap_hdr = gsmtap.Gsmtap(
+                    channel_type = channel_type2gsmtap(p.channel_type)[0],
+                    timeslot = channel_type2gsmtap(p.channel_type)[1],
+                    subslot = gsmtap.sdcch_subslot(p.channel_type, p.frame_nr),
+                    frame_nr = p.frame_nr,
+                    signal_level = p.rx_level,
+                    snr = p.snr,
+                    arfcn = p.arfcn,
+                )
+                data =  str(gsmtap_hdr / p[osmol1_data_ind].payload)
+                self.gsmtap_sock.sendto(data, ("127.0.0.1", 4729))
+                p = gsmtap.Gsmtap(data)
                 return p
 
     def proxy(self, sockname):
@@ -188,23 +367,33 @@ class l1ctl:
         conn, addr = sock.accept()
         print "run"
 
+        n_bytes = 0
+        start = time.time()
         while 1:
             readable,_,_ = select.select([conn], [], [], 0)
             if readable:
                 l = struct.unpack("!H", conn.recv(2))[0]
                 buff = conn.recv(l)
-                self.proxy_show_pack(buff)
+                n_bytes += len(buff)
+                self.proxy_show_pack(buff,"pc->ms")
                 self.l1_send(buff)
 
             
             readable,_,_ = select.select([self.sock], [], [], 0)
             if readable:
                 buff = self.l1_recv(raw=True)
-                #self.proxy_show_pack(buff)
+                n_bytes += len(buff)
+                self.proxy_show_pack(buff, "ms->pc")
                 l = struct.pack("!H", len(buff))
                 conn.send(l + str(buff))
+            time.sleep(0.0001)
+            if time.time() - start > 1:
+                print "rate: %f kbit/s" % (n_bytes*8/1e3)
+                n_bytes = 0
+                start = time.time()
+                
 
-    def proxy_show_pack(self, pack):
+    def proxy_show_pack(self, pack, direction):
         p = osmol1(pack)
         skip = [
             msgtype["RESET_REQ"],
@@ -214,24 +403,50 @@ class l1ctl:
             msgtype["NEIGH_PM_REQ"],
             msgtype["NEIGH_PM_IND"],
             msgtype["RESET_REQ"],
-            msgtype["FBSB_REQ"],
+            msgtype["RESET_CONF"],
+            #msgtype["FBSB_REQ"],
             msgtype["CCCH_MODE_REQ"],
+            msgtype["PM_CONF"],
         ]
-        if p.msgtype in skip:
+
+        if p.msgtype == msgtype["DATA_IND"] or p.msgtype == msgtype["DATA_REQ"]:
+            gsmtap_hdr = gsmtap.Gsmtap(
+                channel_type = channel_type2gsmtap(p.channel_type)[0],
+                    timeslot = channel_type2gsmtap(p.channel_type)[1],
+            )
+            if p.msgtype == msgtype["DATA_IND"]:
+                gsmtap_hdr.frame_nr = p.frame_nr
+                subslot = gsmtap.sdcch_subslot(p.channel_type, p.frame_nr)
+                gsmtap_hdr.arfcn = p.arfcn
+                gsmtap_hdr.signal_level = p.rx_level
+                data =  str(gsmtap_hdr / p[osmol1_data_ind].payload)
+            else:
+                gsmtap_hdr.uplink = 1
+                data =  str(gsmtap_hdr / p[osmol1_data_req].payload)
+                print len(p[osmol1_data_req].payload)
+
+            self.gsmtap_sock.sendto(data, ("127.0.0.1", 4729))
+            g = gsmtap.Gsmtap(data)
+            gsmtap.process(g)
+        if p.msgtype == 3:
             return
 
-        print repr(p)
+
+        #if p.msgtype in skip:
+        #    return
+
+        print direction, repr(p)
 
 
 
+if __name__ == "__main__":
+    l1 = l1ctl("/tmp/osmocom_l2")
+    l1.proxy("/tmp/osmocom_l2_proxy")
 
-l1 = l1ctl("/tmp/osmocom_l2")
-l1.proxy("/tmp/osmocom_l2_proxy")
+    #l1.fbsb_req(22)
+    #
+    #sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+    #while True:
+    #    data = l1.recv()
+    #    print repr(data)
 
-#l1.set_arfcn(22)
-#
-#sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-#while True:
-#    data = l1.recv()
-#    print repr(data)
-#
