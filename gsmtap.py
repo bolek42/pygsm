@@ -96,6 +96,7 @@ class PagingRequestType1(Packet):
                     BitField("channel2", 0x00, 2),
                     BitField("pageMode", 0x00, 4),
                     ]
+
 def channelList2arfcn(cl):
     arfcns = []
     ca = 120
@@ -165,6 +166,11 @@ class AssignmentCommand(Packet):
                     BitField("hopping", 1, 1),
                     BitField("maio", 0x00, 6),
                     BitField("hsn", 0x00, 6),
+                    BitField("powerCommand", 0x00, 8),
+                    BitField("elementID", 0x00, 8),
+                    BitField("length", 0x00, 8),
+                    BitField("formatID", 0x00, 8),
+                    FieldListField("ChannelList", None, ByteField("arfcn",0), count_from=lambda p: 15),
                 ]
     
                     
@@ -190,7 +196,10 @@ def process(p):
 
     if AssignmentCommand in p:
         ac = p[AssignmentCommand]
-        print "Assignment Command:\tArfcn: %d Maio: %d HSN: %d Timeslot %d Channel: %s Hopping: %d" % (arfcn, ac.maio, ac.hsn, gsm_channel_type[ac.channel_type], ac.timeslot, ac.hopping)
+        ma = channelList2arfcn(ac.ChannelList)
+        if len(ma) > 8:
+            return
+        print "Assignment Command:\tArfcn: %d Maio: %d HSN: %d Channel: %s Timeslot: %d Hopping: %d Ma: %s" % (arfcn, ac.maio, ac.hsn, gsm_channel_type[ac.channel_type], ac.timeslot, ac.hopping, ma)
 
 if __name__ == "__main__":
     import sys
@@ -204,8 +213,10 @@ if __name__ == "__main__":
         while 1:
             raw, addr = sock.recvfrom(1024)
             p = Gsmtap(raw)
-            sys.stderr.write("%d   \r" % p.channel_type)
-            process(p)
+            try:
+                process(p)
+            except:
+                pass
     else:
         bind_layers(UDP, Gsmtap, dport=4729)
         for pack in rdpcap(sys.argv[1]):

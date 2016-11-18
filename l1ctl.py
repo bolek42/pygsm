@@ -123,7 +123,7 @@ class osmol1_reset(Packet):
 
 class osmol1_pm_req(Packet):
     fields_desc = [
-        ByteEnumField("type",1,reset_type),
+        ByteField("type",1),
         BitField("",0,24),
         ShortField("arfcn_from",0),
         ShortField("arfcn_to",0)]
@@ -133,7 +133,25 @@ class osmol1_pm_conf(Packet):
         ShortField("arfcn",0),
         ByteField("pm1",0),
         ByteField("pm2",0),]
+bind_layers(osmol1_pm_conf, osmol1_pm_conf)
 
+class osmol1_neigh_pm_req(Packet):
+    fields_desc = [
+        ByteField("n",0),
+        ByteField("",0),
+        FieldListField("band_arfcn", None, ShortField("arfcn",0), count_from= lambda p: 64),
+        FieldListField("tn", None, ByteField("arfcn",0), count_from= lambda p: 64),
+    ]
+
+class osmol1_neigh_pm_ind(Packet):
+    fields_desc = [
+        ShortField("arfcn",0),
+        ByteField("pm1",0),
+        ByteField("pm2",0),
+        ByteField("tn",0),
+        ByteField("",0),
+    ]
+bind_layers(osmol1_neigh_pm_ind, osmol1_neigh_pm_ind)
 
 class osmol1_fbsb_req(Packet):
     fields_desc = [
@@ -224,6 +242,8 @@ bind_layers(osmol1, osmol1_reset, msgtype=msgtype["RESET_REQ"])
 bind_layers(osmol1, osmol1_reset, msgtype=msgtype["RESET_CONF"])
 bind_layers(osmol1, osmol1_ccch_mode, msgtype=msgtype["CCCH_MODE_REQ"])
 bind_layers(osmol1, osmol1_ccch_mode, msgtype=msgtype["CCCH_MODE_CONF"])
+bind_layers(osmol1, osmol1_neigh_pm_req, msgtype=msgtype["NEIGH_PM_REQ"])
+bind_layers(osmol1, osmol1_neigh_pm_ind, msgtype=msgtype["NEIGH_PM_IND"])
 
 
 def bind_gsm(layer):
@@ -333,7 +353,23 @@ class l1ctl:
         pack = osmol1(msgtype=msgtype["PARAM_REQ"]) / pr
         print repr(pack)
         self.l1_send(pack)
-        
+
+    def pm_req(self, arfcn_from, arfcn_to):
+        pr = osmol1_pm_req(##
+            arfcn_from=arfcn_from,
+            arfcn_to=arfcn_to)
+        pack = osmol1(msgtype=msgtype["PM_REQ"]) / pr
+        self.l1_send(pack)
+
+    def neigh_pm_req(self, arfcn_tn):
+        padding = [0] * (64-len(arfcn_tn))
+        pr = osmol1_neigh_pm_req(
+            n=len(arfcn_tn),
+            band_arfcn=map(lambda x:x[0], arfcn_tn) + padding,
+            tn=map(lambda x:x[1], arfcn_tn) + padding)
+        pack = osmol1(msgtype=msgtype["NEIGH_PM_REQ"]) / pr
+        self.l1_send(pack)
+
 
     #receive data
     def recv(self):
@@ -353,6 +389,7 @@ class l1ctl:
                 self.gsmtap_sock.sendto(data, ("127.0.0.1", 4729))
                 p = gsmtap.Gsmtap(data)
                 return p
+
 
     def proxy(self, sockname):
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -427,7 +464,10 @@ class l1ctl:
 
             self.gsmtap_sock.sendto(data, ("127.0.0.1", 4729))
             g = gsmtap.Gsmtap(data)
-            gsmtap.process(g)
+            try:
+                gsmtap.process(g)
+            except:
+                pass
         if p.msgtype == 3:
             return
 
@@ -436,6 +476,44 @@ class l1ctl:
         #    return
 
         print direction, repr(p)
+
+    # Layer 2
+    def scan(self, arfcn_from, arfcn_to, threshold=-70):
+        self.pm_req(arfcn_from, arfcn_to)
+        arfcn_last = 0
+        result = []
+        while arfcn_last < arfcn_to:
+            p = self.l1_recv()
+            if osmol1_pm_conf in p:
+                pm_conf = p.payload
+                while pm_conf:
+                    rxlevel = pm_conf.pm1-110
+                    color = "\033[31m" if rxlevel < threshold else "\033[32m"
+                    print "%sarfcn: %d rxlevel: %ddbm\033[39m" % (color, pm_conf.arfcn, pm_conf.pm1-110)
+                    arfcn_last = pm_conf.arfcn
+                    result += [(pm_conf.arfcn, rxlevel)]
+
+                    pm_conf = pm_conf.payload
+
+        return sorted(result, key=lambda x: x[1], reverse=True)
+
+    def sync(self, arfcn_from, arfcn_to):
+        self.reset()
+        for arfcn, rxlevel in self.scan(arfcn_from, arfcn_to):
+            self.reset()
+            p,dbm = self.fbsb_req(arfcn)
+            if p.result != 255:
+                return arfcn, dbm
+
+    def get_ca(self):
+        while True:
+            p = self.recv()
+            if gsmtap.SystemInformationType1 in p:
+                s1 = p[gsmtap.SystemInformationType1]
+                ca = gsmtap.channelList2arfcn(s1.ChannelList)
+                ca = sorted(ca)
+                print "Cell Allocation: %s" % (str(ca))
+                return ca
 
 
 

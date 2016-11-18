@@ -3,34 +3,20 @@ from l1ctl import *
 from gsmtap import *
 from random import *
 
-def scan(l1):
-    for arfcn in xrange(128):
-        l1.reset()
-        p,dbm = l1.fbsb_req(arfcn)
-        if p.result == 0 and dbm > -70:
-            return arfcn
-
 l1 = l1ctl("/tmp/osmocom_l2")
 
 #sync to cell
 if len(sys.argv) == 1:
-    arfcn = scan(l1)
+    arfcn, rxlevel = l1.sync(1, 124)
 else:
     arfcn = int(sys.argv[1])
     l1.fbsb_req(arfcn)
 
-while True:
-    p = l1.recv()
-    if SystemInformationType1 in p:
-        s1 = p[SystemInformationType1]
-        arfcns = channelList2arfcn(s1.ChannelList)
-        arfcns = sorted(arfcns)
-        print "Cell Allocation: %s" % (str(arfcns))
-        break
+arfcns = l1.get_ca()
 
 
-l1.param_req(0, 5)
-l1.rach_req(1, offset=7)
+#l1.param_req(0, 5)
+#l1.rach_req(1, offset=7)
 
 #follow immediate assignment
 f = open("/tmp/rxlevel.csv","w")
@@ -60,6 +46,9 @@ while True:
                 ma += [arfcns[i]]
 
         l1.dm_est_req(ia.channel_type, ia.timeslot, ia.maio, ia.hsn, ia.training_sequence, ma)
+
+    if  sync > 0 and (p.signal_level - 110) > -75:
+        sync = time.time()
 
     if sync > 0 and time.time() - sync > 10:
         sync = 0
