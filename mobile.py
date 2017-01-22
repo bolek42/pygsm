@@ -78,42 +78,15 @@ class mobile:
             process(p)
 
 
-    def proxy_process(self, pack, direction):
-        p = osmol1(pack)
-
-        if p.msgtype in (msgtype["NEIGH_PM_REQ"], msgtype["NEIGH_PM_IND"]):
-            return False
-
-
-        if p.msgtype == msgtype["DATA_IND"] or p.msgtype == msgtype["DATA_REQ"]:
-            gsmtap_hdr = gsmtap.Gsmtap(
-                channel_type = channel_type2gsmtap(p.channel_type)[0],
-                    timeslot = channel_type2gsmtap(p.channel_type)[1],
-            )
-            if p.msgtype == msgtype["DATA_IND"]:
-                gsmtap_hdr.frame_nr = p.frame_nr
-                subslot = gsmtap.sdcch_subslot(p.channel_type, p.frame_nr)
-                gsmtap_hdr.arfcn = p.arfcn
-                gsmtap_hdr.signal_level = p.rx_level
-                data =  str(gsmtap_hdr / p[osmol1_data_ind].payload)
-            else:
-                gsmtap_hdr.uplink = 1
-                data =  str(gsmtap_hdr / p[osmol1_data_req].payload)
-
-            g = gsmtap.Gsmtap(data)
-            gsmtap.process(g)
-
-
-        return True
-
-m = mobile()
-try:
-    m.stick_arfcn(int(sys.argv[1]))
-    m.wait_for_auth()
-    print m.cmd("show ms 1")
-    
-    m.call("015112793762")
-    m.shutdown()
-except:
-    import traceback; traceback.print_exc()
-    m.shutdown()
+if __name__ = "__main__":
+    m = mobile()
+    try:
+        m.stick_arfcn(int(sys.argv[1]))
+        m.wait_for_auth()
+        print m.cmd("show ms 1")
+        
+        m.call(sys.argv[1])
+        m.shutdown()
+    except:
+        import traceback; traceback.print_exc()
+        m.shutdown()

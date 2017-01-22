@@ -1,0 +1,67 @@
+diff --git a/src/target/firmware/Makefile b/src/target/firmware/Makefile
+index 9b02033..846d98d 100644
+--- a/src/target/firmware/Makefile
++++ b/src/target/firmware/Makefile
+@@ -129,7 +129,7 @@ INCLUDES=-Iinclude/ -I../../../include -I../../shared/libosmocore/include
+ #
+ 
+ # Uncomment this line if you want to enable Tx (Transmit) Support.
+-#CFLAGS += -DCONFIG_TX_ENABLE
++CFLAGS += -DCONFIG_TX_ENABLE
+ 
+ # Uncomment this line if you want to write to flash.
+ #CFLAGS += -DCONFIG_FLASH_WRITE
+diff --git a/src/target/firmware/layer1/mframe_sched.c b/src/target/firmware/layer1/mframe_sched.c
+index c55b809..2d26d85 100644
+--- a/src/target/firmware/layer1/mframe_sched.c
++++ b/src/target/firmware/layer1/mframe_sched.c
+@@ -208,12 +208,16 @@ static const struct mframe_sched_item mf_sdcch4_cbch[] = {
+ };
+ 
+ /* Measurement for MF 51 C0 */
++//static const struct mframe_sched_item mf_neigh_pm51_c0t0[] = {
++// { .sched_set = NEIGH_PM   , .modulo = 51, .frame_nr = 0 },
++// { .sched_set = NEIGH_PM   , .modulo = 51, .frame_nr = 10 },
++// { .sched_set = NEIGH_PM   , .modulo = 51, .frame_nr = 20 },
++// { .sched_set = NEIGH_PM   , .modulo = 51, .frame_nr = 30 },
++// { .sched_set = NEIGH_PM   , .modulo = 51, .frame_nr = 40 },
++// { .sched_set = NULL }
++//};
+ static const struct mframe_sched_item mf_neigh_pm51_c0t0[] = {
+-   { .sched_set = NEIGH_PM   , .modulo = 51, .frame_nr = 0 },
+-   { .sched_set = NEIGH_PM   , .modulo = 51, .frame_nr = 10 },
+-   { .sched_set = NEIGH_PM   , .modulo = 51, .frame_nr = 20 },
+-   { .sched_set = NEIGH_PM   , .modulo = 51, .frame_nr = 30 },
+-   { .sched_set = NEIGH_PM   , .modulo = 51, .frame_nr = 40 },
++   { .sched_set = NEIGH_PM   , .modulo = 1, .frame_nr = 0 },
+    { .sched_set = NULL }
+ };
+ 
+diff --git a/src/target/firmware/layer1/prim_pm.c b/src/target/firmware/layer1/prim_pm.c
+index 1630600..e8558dc 100644
+--- a/src/target/firmware/layer1/prim_pm.c
++++ b/src/target/firmware/layer1/prim_pm.c
+@@ -201,7 +201,11 @@ static int l1s_neigh_pm_resp(__unused uint8_t p1, __unused uint8_t p2,
+    dbm = (uint16_t) ((dsp_api.db_r->a_pm[0] & 0xffff) >> 3);
+    level = dbm2rxlev(agc_inp_dbm8_by_pm(dbm)/8);
+ 
+-   l1s.neigh_pm.level[l1s.neigh_pm.pos] = level;
++    //Handle 2 frames delay 
++    if (l1s.neigh_pm.pos < 2)
++        l1s.neigh_pm.level[l1s.neigh_pm.n + l1s.neigh_pm.pos - 2] = level;
++    else
++        l1s.neigh_pm.level[l1s.neigh_pm.pos - 2] = level;
+ 
+    if (++l1s.neigh_pm.pos >= l1s.neigh_pm.n) {
+        struct msgb *msg;
+@@ -222,6 +226,9 @@ static int l1s_neigh_pm_resp(__unused uint8_t p1, __unused uint8_t p2,
+            mi->tn = l1s.neigh_pm.tn[i];
+            mi->pm[0] = l1s.neigh_pm.level[i];
+            mi->pm[1] = 0;
++
++            //save frame number to measurements
++            if (i < 4) mi->pm[1] = ((l1s.current_time.fn - l1s.neigh_pm.n)>>(i*8)) & 0xff;
+        }
+        l1_queue_for_l2(msg);
+    }
+

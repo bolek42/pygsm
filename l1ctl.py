@@ -99,7 +99,7 @@ def osmol1_info_ul():
     return [
         BitEnumField("channel_type", 0x00, 5, channel_type),
         BitField("timeslot", 0x00, 3),
-        ByteField("link_id",None),
+        ByteField("link_id",0),
         BitField("",0,16)]
 
 def osmol1_info_dl():
@@ -317,18 +317,18 @@ class l1ctl:
                 print "Arfcn: %d result %3d rxlevel: %ddbm" % (arfcn, p.result, dbm)
                 return p, dbm
 
-    def dm_est_req(self, channel_type, timeslot, maio, hsn, training_sequence, ma):
+    def dm_est_req(self, channel_type, timeslot, maio, hsn, training_sequence, ma, tch_mode=0, h=1):
         ma_pad = ma + [0] * (64-len(ma))
         est = osmol1_dm_est_req(
             link_id = 0,
             tsc=training_sequence,
-            h = 1,
+            h = h,
             channel_type = channel_type,
             timeslot = timeslot,
             maio = maio,
             ma = ma_pad,
             n = len(ma),
-            tch_mode = 0,
+            tch_mode = tch_mode,
             audio_mode = 5)
 
         pack = osmol1(msgtype=msgtype["DM_EST_REQ"]) / est
@@ -345,6 +345,14 @@ class l1ctl:
             offset=offset)
         pack = osmol1(msgtype=msgtype["RACH_REQ"]) / rq
         #print repr(pack)
+        self.l1_send(pack)
+
+    def data_req(self, timeslot, channel_type, data):
+        rq = osmol1_data_req(
+            channel_type=0,
+            timeslot=0,
+            link_id=0)
+        pack = osmol1(msgtype=msgtype["DATA_REQ"]) / rq
         self.l1_send(pack)
 
     def param_req(self, timing_advance, tx_power):
