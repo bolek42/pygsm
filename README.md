@@ -13,8 +13,6 @@ Install the following packages:
 # Experimental patches to Osmocom layer1
 The scheduler in layer1/mframe\_sched.c calls the neighbour power measurement every 10 frames.
 This can be modified to perform powermeasurements every frame, increasing performance.
-Even though, there might be stability problems ;)
-This will be further evaluated...
 
 
 ```c
@@ -33,6 +31,13 @@ static const struct mframe\_sched\_item mf\_neigh\_pm51\_c0t0[] = {
 };
 ```
 
+In addition as the pm2 field for the powermeasurements are not used in prim\_pm.c it can be used to save the frame number of the first measurement in l1s\_neigh\_pm\_resp.
+```c
+if (i < 4)
+    mi->pm[1] = ((l1s.current_time.fn - l1s.neigh_pm.n)>>(i*8)) & 0xff;
+else
+    mi->pm[1] = 0;
+```
 
 
 ## l1ctl.py

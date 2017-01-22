@@ -90,6 +90,17 @@ class SystemInformationType1(Packet):
                     BitField("cell_reestablishment", 0x00, 1),
                     ShortField("acc", 0x00)]
 
+#TODO add missing fields
+class SystemInformationType3(Packet):
+    fields_desc=[   ShortField("cell_id", 0x0000),
+                    BitField("mcc2", 0x0, 4),
+                    BitField("mcc1", 0x0, 4),
+                    BitField("padding", 0xf, 4),
+                    BitField("mcc3", 0x0, 4),
+                    BitField("mnc2", 0x0, 4),
+                    BitField("mnc1", 0x0, 4),
+                    ShortField("lac", 0x0000)]
+
 
 class PagingRequestType1(Packet):
     fields_desc=[   BitField("channel1", 0x00, 2),
@@ -130,14 +141,15 @@ bind_layers(Gsmtap, CCCH, channel_type=channel_type["CCCH"])
 bind_layers(Gsmtap, CCCH, channel_type=channel_type["BCCH"])
 bind_layers(Gsmtap, CCCH, channel_type=channel_type["PCH"])
 bind_layers(CCCH, SystemInformationType1, type=0x19)
+bind_layers(CCCH, SystemInformationType3, type=0x1b)
 bind_layers(CCCH, PagingRequestType1, type=0x21)
 bind_layers(CCCH, ImmediateAssignment, type=0x3f)
 
-lapdm_type = {
-    "MEASUREMENT_REPORT": 0x15,
-    "PAGING_RESPONSE": 0x27,
-    "ASSIGNMENT_COMMAND": 0x2e,
-    "CIPHERING_MODE_COMMAND": 0x35,
+
+protocol_discriminator = {
+    "CALL_CONTROLL": 0x3,
+    "MOBILITY_MANAGEMENT": 0x5,
+    "RADIO_RESOURCE_MANAGEMENT": 0x6,
     }
 
 #Link Access Procedure
@@ -145,7 +157,7 @@ class LAPDM(Packet):
     fields_desc=[   BitField("padding", 0, 1),
                     BitField("lpd", 0, 2),
                     BitField("sapi", 0, 3),
-                    BitField("cr", 1, 1),
+                    BitField("cr", 1, 1), # 0
                     BitField("ea", 1, 1),
                     BitField("n_r", 0, 3),
                     BitField("padding", 0, 1),
@@ -155,9 +167,48 @@ class LAPDM(Packet):
                     BitField("m", 0, 1),
                     BitField("el", 1, 1),
                     BitField("skip_indicator", 1, 4),
-                    BitField("protocol_discriminator", 6, 4),
-                    ByteEnumField("type", None, lapdm_type)
+                    BitEnumField("protocol_discriminator", 6, 4, protocol_discriminator),
                 ]
+
+#Mobility Management
+mm_type = {
+    "LOCATION_UPDATE_REQUEST": 0x8,
+    }
+class MobilityManagement(Packet):
+    fields_desc=[   BitField("sequence", 0, 2),
+                    BitField("type", 0, 6),
+                ]
+bind_layers(LAPDM, MobilityManagement, protocol_discriminator=protocol_discriminator["MOBILITY_MANAGEMENT"])
+
+#XXX Incomplete
+class LocationUpdateRequest(Packet):
+    fields_desc=[   BitField("spare", 0, 1),
+                    BitField("cipher_key_sequence", 0, 3),
+
+                    BitField("follow_on_request", 0, 1),
+                    BitField("spare", 0, 1),
+                    BitField("updateing_type", 2, 2), #imsi attach
+
+                    #location area information
+                    BitField("mcc3", 0x0, 4),
+                    BitField("mnc2", 0x0, 4),
+                    BitField("mnc1", 0x0, 4),
+                    ShortField("lac", 0x0000),
+
+                    ByteField("mobile_station_classmark", 0x23),
+                ]
+
+
+#Radio Resource Management
+rss_type = {
+    "ASSIGNMENT_COMMAND": 0x2e,
+    "CIPHERING_MODE_COMMAND": 0x35,
+    }
+
+class RadioRessourceManagement(Packet):
+    fields_desc=[   ByteEnumField("type", None, rss_type)]
+
+bind_layers(LAPDM, RadioRessourceManagement, protocol_discriminator=protocol_discriminator["RADIO_RESOURCE_MANAGEMENT"])
 
 class AssignmentCommand(Packet):
     fields_desc=[   BitField("channel_type", 0, 5),
@@ -173,9 +224,9 @@ class AssignmentCommand(Packet):
                     FieldListField("ChannelList", None, ByteField("arfcn",0), count_from=lambda p: 15),
                 ]
     
+bind_layers(RadioRessourceManagement, AssignmentCommand, type=rss_type["ASSIGNMENT_COMMAND"])
                     
 
-bind_layers(LAPDM, AssignmentCommand, type=lapdm_type["ASSIGNMENT_COMMAND"])
 bind_layers(Gsmtap, LAPDM, channel_type=channel_type["SDCCH8"])
 
 
@@ -192,14 +243,19 @@ def process(p):
 
     if ImmediateAssignment in p:
         ia = p[ImmediateAssignment]
-        print "Immediate Assignment:\tArfcn: %d Maio: %d HSN: %d Channel: %s Timeslot %d Ma: %s" % (arfcn, ia.maio, ia.hsn, gsm_channel_type[ia.channel_type], ia.timeslot, bin(ia.ma)[2:])
+        print "Immediate Assignment:\tArfcn: %d Hopping: %d Maio: %d HSN: %d Channel: %s Timeslot %d Ma: %s" % (arfcn, ia.hopping, ia.maio, ia.hsn, gsm_channel_type[ia.channel_type], ia.timeslot, bin(ia.ma)[2:])
 
     if AssignmentCommand in p:
         ac = p[AssignmentCommand]
-        ma = channelList2arfcn(ac.ChannelList)
+        if ac.hopping:
+            ma = channelList2arfcn(ac.ChannelList)
+        else:
+            ma = [int(ac.hsn + ((ac.maio & 0xf)<<6))]
         if len(ma) > 8:
+            print "error, mobile allocation too long"
             return
         print "Assignment Command:\tArfcn: %d Maio: %d HSN: %d Channel: %s Timeslot: %d Hopping: %d Ma: %s" % (arfcn, ac.maio, ac.hsn, gsm_channel_type[ac.channel_type], ac.timeslot, ac.hopping, ma)
+
 
 if __name__ == "__main__":
     import sys
@@ -212,6 +268,7 @@ if __name__ == "__main__":
 
         while 1:
             raw, addr = sock.recvfrom(1024)
+            print raw
             p = Gsmtap(raw)
             try:
                 process(p)

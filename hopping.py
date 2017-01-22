@@ -30,11 +30,15 @@ while True:
     if ImmediateAssignment in p:
         process(p)
         ia = p[ImmediateAssignment]
-        if "SDCCH" not in gsm_channel_type[ia.channel_type]:
+        if "SDCCH" not in gsm_channel_type[ia.channel_type] and False:
+            continue
+
+        if ia.hopping == 0:
             continue
 
         if sync > 0:
             continue
+        continue
 
         sync = time.time()
         l1.reset(2)

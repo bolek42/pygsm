@@ -278,6 +278,7 @@ class l1ctl:
         #open socket
         self.sock = socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
         self.sock.connect(l1sock)
+        self.reset()
         
         self.gsmtap_sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 
@@ -296,6 +297,9 @@ class l1ctl:
     def reset(self, t=1):
         pack = osmol1(msgtype=13) / osmol1_reset(type=t)
         self.l1_send(pack)
+
+        while osmol1_reset not in self.l1_recv():
+            pass
 
     #sync to arfcn
     def fbsb_req(self, arfcn):
@@ -412,25 +416,26 @@ class l1ctl:
                 l = struct.unpack("!H", conn.recv(2))[0]
                 buff = conn.recv(l)
                 n_bytes += len(buff)
-                self.proxy_show_pack(buff,"pc->ms")
-                self.l1_send(buff)
+                if self.proxy_process(buff,"pc->ms"):
+                    self.l1_send(buff)
 
-            
             readable,_,_ = select.select([self.sock], [], [], 0)
             if readable:
                 buff = self.l1_recv(raw=True)
                 n_bytes += len(buff)
-                self.proxy_show_pack(buff, "ms->pc")
-                l = struct.pack("!H", len(buff))
-                conn.send(l + str(buff))
+                if self.proxy_process(buff, "ms->pc"):
+                    l = struct.pack("!H", len(buff))
+                    conn.send(l + str(buff))
+
+
             time.sleep(0.0001)
-            if time.time() - start > 1:
-                print "rate: %f kbit/s" % (n_bytes*8/1e3)
-                n_bytes = 0
-                start = time.time()
+            #if time.time() - start > 1:
+            #    print "rate: %f kbit/s" % (n_bytes*8/1e3)
+            #    n_bytes = 0
+            #    start = time.time()
                 
 
-    def proxy_show_pack(self, pack, direction):
+    def proxy_process(self, pack, direction):
         p = osmol1(pack)
         skip = [
             msgtype["RESET_REQ"],
@@ -466,16 +471,14 @@ class l1ctl:
             g = gsmtap.Gsmtap(data)
             try:
                 gsmtap.process(g)
+                print repr(g)
             except:
                 pass
-        if p.msgtype == 3:
-            return
-
-
         #if p.msgtype in skip:
         #    return
 
         print direction, repr(p)
+        return True
 
     # Layer 2
     def scan(self, arfcn_from, arfcn_to, threshold=-70):
@@ -514,6 +517,14 @@ class l1ctl:
                 ca = sorted(ca)
                 print "Cell Allocation: %s" % (str(ca))
                 return ca
+
+    def get_cell_id(self):
+        while True:
+            p = self.recv()
+            if gsmtap.SystemInformationType3 in p:
+                s3 = p[gsmtap.SystemInformationType3]
+                print "Cell ID: %d" % s3.cell_id
+                return s3.cell_id
 
 
 
